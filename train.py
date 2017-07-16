@@ -45,7 +45,7 @@ def train_cnn_rnn():
 	timestamp = str(int(time.time()))
 	# trained_dir = './trained_results_' + timestamp + '/'
 	# if os.path.exists(trained_dir):
-	# 	shutil.rmtree(trained_dir)
+	#	shutil.rmtree(trained_dir)
 	# os.makedirs(trained_dir)
 
 	graph = tf.Graph()
@@ -54,20 +54,32 @@ def train_cnn_rnn():
 		sess = tf.Session(config=session_conf)
 		with sess.as_default():
 			cnn_rnn = TextCNNRNN(embedding_mat=embedding_mat,
-			                     sequence_length=x_train.shape[1],
-                                 num_classes=y_train.shape[1],
-                                 non_static=params['non_static'],
-                                 hidden_unit=params['hidden_unit'],
-                                 max_pool_size=params['max_pool_size'],
-                                 filter_sizes=map(int, params['filter_sizes'].split(",")),
-                                 num_filters=params['num_filters'],
-                                 embedding_size=params['embedding_dim'],
-                                 l2_reg_lambda=params['l2_reg_lambda'])
+								 sequence_length=x_train.shape[1],
+								 num_classes=y_train.shape[1],
+								 non_static=params['non_static'],
+								 hidden_unit=params['hidden_unit'],
+								 max_pool_size=params['max_pool_size'],
+								 filter_sizes=map(int, params['filter_sizes'].split(",")),
+								 num_filters=params['num_filters'],
+								 embedding_size=params['embedding_dim'],
+								 l2_reg_lambda=params['l2_reg_lambda'])
 
 			global_step = tf.Variable(0, name='global_step', trainable=False)
 			optimizer = tf.train.RMSPropOptimizer(1e-3, decay=0.9)
 			grads_and_vars = optimizer.compute_gradients(cnn_rnn.loss)
 			train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
+
+			# Keep track of gradient values and sparsity (optional)
+			"""
+            grad_summaries = []
+			for g, v in grads_and_vars:
+				if g is not None:
+					grad_hist_summary = tf.summary.histogram("{}/grad/hist".format(v.name), g)
+					sparsity_summary = tf.summary.scalar("{}/grad/sparsity".format(v.name), tf.nn.zero_fraction(g))
+					grad_summaries.append(grad_hist_summary)
+					grad_summaries.append(sparsity_summary)
+			grad_summaries_merged = tf.summary.merge(grad_summaries)
+            """
 
 			# Checkpoint files will be saved in this directory during training
 			checkpoint_dir = './checkpoints_' + timestamp + '/'
@@ -76,27 +88,43 @@ def train_cnn_rnn():
 			os.makedirs(checkpoint_dir)
 			checkpoint_prefix = os.path.join(checkpoint_dir, 'model')
 
+			# Summaries for loss and accuracy
+			loss_summary = tf.summary.scalar("loss", cnn_rnn.loss)
+			acc_summary = tf.summary.scalar("accuracy", cnn_rnn.accuracy)
+
+			# Train Summaries
+			train_summary_op = tf.summary.merge([loss_summary, acc_summary])
+			train_summary_dir = os.path.join(checkpoint_dir, "summaries", "train")
+			train_summary_writer = tf.summary.FileWriter(train_summary_dir, sess.graph)
+
+			# Dev summaries
+			dev_summary_op = tf.summary.merge([loss_summary, acc_summary])
+			dev_summary_dir = os.path.join(checkpoint_dir, "summaries", "dev")
+			dev_summary_writer = tf.summary.FileWriter(dev_summary_dir, sess.graph)
+
 			def real_len(batches):
 				return [np.ceil(np.argmin(batch + [0]) * 1.0 / params['max_pool_size']) for batch in batches]
 
 			def train_step(x_batch, y_batch):
 				feed_dict = {cnn_rnn.input_x: x_batch,
-                             cnn_rnn.input_y: y_batch,
-                             cnn_rnn.dropout_keep_prob: params['dropout_keep_prob'],
-                             cnn_rnn.batch_size: len(x_batch),
-                             cnn_rnn.pad: np.zeros([len(x_batch), 1, params['embedding_dim'], 1]),
-                             cnn_rnn.real_len: real_len(x_batch),}
-				_, step, loss, accuracy = sess.run([train_op, global_step, cnn_rnn.loss, cnn_rnn.accuracy], feed_dict)
+							 cnn_rnn.input_y: y_batch,
+							 cnn_rnn.dropout_keep_prob: params['dropout_keep_prob'],
+							 cnn_rnn.batch_size: len(x_batch),
+							 cnn_rnn.pad: np.zeros([len(x_batch), 1, params['embedding_dim'], 1]),
+							 cnn_rnn.real_len: real_len(x_batch),}
+				_, step, summaries, loss, accuracy = sess.run([train_op, global_step, train_summary_op, cnn_rnn.loss, cnn_rnn.accuracy], feed_dict)
+				train_summary_writer.add_summary(summaries, step)
 
 			def dev_step(x_batch, y_batch):
 				feed_dict = {cnn_rnn.input_x: x_batch,
-                             cnn_rnn.input_y: y_batch,
-                             cnn_rnn.dropout_keep_prob: 1.0,
-                             cnn_rnn.batch_size: len(x_batch),
-                             cnn_rnn.pad: np.zeros([len(x_batch), 1, params['embedding_dim'], 1]),
-                             cnn_rnn.real_len: real_len(x_batch),}
-				step, loss, accuracy, num_correct, predictions = sess.run([global_step, cnn_rnn.loss, cnn_rnn.accuracy,
-				                                                           cnn_rnn.num_correct, cnn_rnn.predictions], feed_dict)
+							 cnn_rnn.input_y: y_batch,
+							 cnn_rnn.dropout_keep_prob: 1.0,
+							 cnn_rnn.batch_size: len(x_batch),
+							 cnn_rnn.pad: np.zeros([len(x_batch), 1, params['embedding_dim'], 1]),
+							 cnn_rnn.real_len: real_len(x_batch),}
+				step, summaries, loss, accuracy, num_correct, predictions = sess.run([global_step, dev_summary_op, cnn_rnn.loss, cnn_rnn.accuracy,
+																		   cnn_rnn.num_correct, cnn_rnn.predictions], feed_dict)
+				dev_summary_writer.add_summary(summaries, step)
 				return accuracy, loss, num_correct, predictions
 
 			saver = tf.train.Saver(tf.global_variables())
