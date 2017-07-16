@@ -28,3 +28,6 @@
   
 ### Reference:
  - [Implement a cnn for text classification in tensorflow](http://www.wildml.com/2015/12/implementing-a-cnn-for-text-classification-in-tensorflow/)
+
+### TensorBoard Visualization:
+![tf gragh](./pic/tf_graph.png)
